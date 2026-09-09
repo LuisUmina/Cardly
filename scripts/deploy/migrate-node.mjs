@@ -79,26 +79,33 @@ async function ensureLedger(client) {
   `);
 }
 
-async function isAlreadyApplied(client, filename) {
-  const result = await client.query(
-    "SELECT 1 FROM schema_migrations WHERE filename = $1",
-    [filename],
-  );
-  return result.rowCount > 0;
+async function loadAppliedMigrations(client) {
+  const result = await client.query("SELECT filename FROM schema_migrations");
+  return new Set(result.rows.map((row) => row.filename));
 }
 
-async function applyMigrations(client) {
-  const migrationsDir = join(ROOT_DIR, "db", "migrations");
-  console.log("Running migrations...");
+/**
+ * Applies one migration on a connection of its own.
+ *
+ * The fresh connection is the whole point, not incidental tidiness. Several
+ * migrations declare helpers in `pg_temp`, the session-local temporary schema —
+ * 0007, 0018 and 0027 each create `pg_temp.to_canonical_jsonb_timestamp` with
+ * the same signature. The shell script runs a separate psql process per file, so
+ * every file gets an empty `pg_temp` and every one of those CREATEs succeeds.
+ * Reusing one connection across files keeps the first definition alive and makes
+ * the second file fail with "function already exists with same argument types".
+ * One session per file is what reproduces psql's behavior.
+ *
+ * The ledger row is written inside the migration's own transaction, which is
+ * slightly stricter than the shell script: there, the INSERT is a separate psql
+ * call after the commit, so a crash in between would re-run an applied file.
+ */
+async function applyMigration(createClient, migrationsDir, filename) {
+  const sql = readFileSync(join(migrationsDir, filename), "utf8");
+  const client = createClient();
+  await client.connect();
 
-  for (const filename of listSqlFiles(migrationsDir)) {
-    if (await isAlreadyApplied(client, filename)) {
-      console.log(`  Skipping ${filename} (already applied)`);
-      continue;
-    }
-
-    console.log(`  Applying ${filename}`);
-    const sql = readFileSync(join(migrationsDir, filename), "utf8");
+  try {
     await client.query("BEGIN");
     try {
       await client.query(sql);
@@ -111,6 +118,24 @@ async function applyMigrations(client) {
       await client.query("ROLLBACK");
       throw new Error(`Migration ${filename} failed: ${error.message}`, { cause: error });
     }
+  } finally {
+    await client.end();
+  }
+}
+
+async function applyMigrations(client, createClient) {
+  const migrationsDir = join(ROOT_DIR, "db", "migrations");
+  const applied = await loadAppliedMigrations(client);
+  console.log("Running migrations...");
+
+  for (const filename of listSqlFiles(migrationsDir)) {
+    if (applied.has(filename)) {
+      console.log(`  Skipping ${filename} (already applied)`);
+      continue;
+    }
+
+    console.log(`  Applying ${filename}`);
+    await applyMigration(createClient, migrationsDir, filename);
   }
 }
 
@@ -213,12 +238,14 @@ async function reconcileBootstrapAdmins(client) {
 
 async function main() {
   const ClientClass = loadPgClient();
-  const client = createClient(ClientClass, getDatabaseUrl());
+  const databaseUrl = getDatabaseUrl();
+  const newClient = () => createClient(ClientClass, databaseUrl);
+  const client = newClient();
   await client.connect();
 
   try {
     await ensureLedger(client);
-    await applyMigrations(client);
+    await applyMigrations(client, newClient);
     await applyViews(client);
 
     console.log("Setting runtime role passwords...");

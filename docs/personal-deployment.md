@@ -108,18 +108,35 @@ statement that cannot run inside a transaction. That is not luck:
 `db/migrations/0118_*.sql` documents choosing plain `CREATE INDEX` over
 `CONCURRENTLY` precisely because each file is applied as one transaction.
 
-**Check:** the script finishes without error, and `\dn` lists the `org`,
-`content`, `sync`, `auth`, `ai`, `catalog`, `community` and `analytics` schemas.
+Use the **direct** endpoint here, not the `-pooler` one. Migrations run DDL,
+`CREATE ROLE` and `ALTER ROLE ... SET`, none of which belong on a transaction
+pooler.
 
-**Watch for:** the migrations only need the `pgcrypto` and `pg_trgm` extensions
-and no superuser rights, so they should apply cleanly. The part to verify on
-Neon specifically is that roles created through SQL can then open connections —
-that is how the two services authenticate.
+**Check:** 129 rows in `schema_migrations`, and the `org`, `content`, `sync`,
+`auth`, `ai`, `catalog`, `community`, `analytics`, `progress`, `security` and
+`support` schemas all present.
 
-The services connect as the runtime roles, not as the owner:
+**Result on Neon (verified 2026-09-09):** all 129 migrations and the one view
+applied, 76 tables, and the `backend_app`, `auth_app` and `reporting_readonly`
+roles created with login rights. The open question from the first draft of this
+document — whether roles created through SQL can then open connections on Neon —
+is answered: they can, on both the direct and the pooled endpoint.
 
-- backend: `postgresql://backend_app:$BACKEND_DB_PASSWORD@<host>/<db>?sslmode=require`
-- auth: `postgresql://auth_app:$AUTH_DB_PASSWORD@<host>/<db>?sslmode=require`
+The services connect as the runtime roles, not as the owner, and they use the
+**pooled** endpoint:
+
+- backend: `postgresql://backend_app:<pw>@<host>-pooler.<region>.aws.neon.tech/flashcards?sslmode=require`
+- auth: `postgresql://auth_app:<pw>@<host>-pooler.<region>.aws.neon.tech/flashcards?sslmode=require`
+
+The pooler is safe for the runtime because `applyDatabaseScopeInExecutor` in
+`apps/backend/src/database/core.ts` sets the row-level-security context with
+`set_config('app.user_id', $1, true)` — the trailing `true` is `is_local`, so the
+setting is transaction-scoped, which is exactly the unit PgBouncer multiplexes.
+Had it been session-scoped, pooling could have leaked one user's RLS context into
+another user's request, and the direct endpoint would have been mandatory.
+
+Both connection strings are already built and verified in
+`.env.personal-deployment`.
 
 ### 2. Backend on Render
 
