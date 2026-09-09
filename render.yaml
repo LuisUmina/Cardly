@@ -76,8 +76,12 @@ services:
         sync: false
       - key: PUBLIC_API_BASE_URL
         sync: false
-      # Deliberately unset: `.vercel.app` is on the Public Suffix List, so a
-      # domain cookie cannot be set for it. Leaving this empty makes the session
-      # cookie host-only for the Vercel hostname, which is what the proxy setup
-      # needs. Set it only once a real apex domain is in play.
-      # - key: COOKIE_DOMAIN
+      # Required at boot by validateEnv in apps/auth/src/index.ts whenever
+      # NODE_ENV is not "development", so it cannot be left unset.
+      #
+      # Set it to the bare Vercel hostname with NO leading dot, e.g.
+      # `cardly.vercel.app`. A leading dot would name `.vercel.app`, which is on
+      # the Public Suffix List and which browsers refuse; the exact host is a
+      # subdomain of that suffix and is accepted normally.
+      - key: COOKIE_DOMAIN
+        sync: false

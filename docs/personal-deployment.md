@@ -54,7 +54,14 @@ environment-driven, because upstream supports self-hosting.
 4. AWS account with a Cognito user pool that has `EMAIL_OTP` sign-in enabled,
    plus an app client. **Confirm the free tier covers passwordless `EMAIL_OTP`
    before relying on it** — the tier that includes it has changed over time.
-5. `psql` locally, to run the migrations.
+5. Node 24 locally. The psql client is not required; see step 1.
+
+Generated secrets live in `.env.personal-deployment` at the repository root,
+which `.gitignore` already excludes through `**/.env.*`. It holds the three
+runtime role passwords and `SESSION_ENCRYPTION_KEY`, which must be exactly 64
+hex characters — `apps/auth/src/server/crypto.ts` rejects anything else, and
+Render's `generateValue` does not produce that shape, which is why that one
+variable is `sync: false` rather than generated.
 
 ## Runbook
 
@@ -62,19 +69,44 @@ Each step has a check. Do not move on until it passes.
 
 ### 1. Database
 
-Create the Neon project, then run the migrations from a local checkout:
+**Name the database `flashcards`.** Not `neondb`, not `cardly`. Four migrations
+grant connect rights by literal name:
 
-```bash
-export MIGRATION_DATABASE_URL='postgresql://<owner>:<pw>@<host>/<db>?sslmode=require'
-export BACKEND_DB_PASSWORD='<generate one>'
-export AUTH_DB_PASSWORD='<generate one>'
-export REPORTING_DB_PASSWORD='<generate one>'
-bash scripts/deploy/migrate.sh
+```
+db/migrations/0001_initial_schema.sql:134   GRANT CONNECT ON DATABASE flashcards TO app;
+db/migrations/0024_auth_runtime_roles.sql:21-22
+db/migrations/0025_remove_legacy_app_role.sql:89
+db/migrations/0044_reporting_readonly_role.sql:24
 ```
 
-This applies `db/migrations/*.sql` in order, then `db/views/*.sql`, then sets the
-passwords for the `backend_app`, `auth_app` and `reporting_readonly` roles the
-migrations created.
+Any other name fails the run with `database "flashcards" does not exist`.
+Matching the name is deliberately preferred over editing the SQL: every line
+this branch does not diverge from upstream is one less merge conflict later.
+
+Then run the migrations from a local checkout:
+
+```bash
+export MIGRATION_DATABASE_URL='postgresql://<owner>:<pw>@<host>/flashcards?sslmode=require'
+export BACKEND_DB_PASSWORD='<from .env.personal-deployment>'
+export AUTH_DB_PASSWORD='<from .env.personal-deployment>'
+export REPORTING_DB_PASSWORD='<from .env.personal-deployment>'
+
+npm ci --prefix apps/backend      # once, this is where the script resolves `pg`
+node scripts/deploy/migrate-node.mjs
+```
+
+`scripts/deploy/migrate-node.mjs` is a Node port of the upstream
+`scripts/deploy/migrate.sh`, added because this deployment applies migrations
+from a Windows workstation where the psql client is not installed. Both apply
+`db/migrations/*.sql` in order, then `db/views/*.sql`, then set the passwords for
+the `backend_app`, `auth_app` and `reporting_readonly` roles, then reconcile
+`ADMIN_EMAILS`. Use `migrate.sh` instead wherever psql is available; it stays the
+reference implementation.
+
+The port is safe because no migration uses a psql meta-command, and none uses a
+statement that cannot run inside a transaction. That is not luck:
+`db/migrations/0118_*.sql` documents choosing plain `CREATE INDEX` over
+`CONCURRENTLY` precisely because each file is applied as one transaction.
 
 **Check:** the script finishes without error, and `\dn` lists the `org`,
 `content`, `sync`, `auth`, `ai`, `catalog`, `community` and `analytics` schemas.
@@ -138,9 +170,12 @@ Create the user pool and app client, then set on both Render services:
 `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `COGNITO_REGION`. Set
 `ALLOWED_REDIRECT_URIS` and `BACKEND_ALLOWED_ORIGINS` to the Vercel origin.
 
-Leave `COOKIE_DOMAIN` unset. `.vercel.app` is on the Public Suffix List, so a
-domain-scoped cookie cannot be set for it; host-only is both the only option and
-the correct one behind the proxy.
+Set `COOKIE_DOMAIN` to the bare Vercel hostname with **no leading dot**, for
+example `cardly.vercel.app`. Two constraints meet here: `validateEnv` in
+`apps/auth/src/index.ts` refuses to start without the variable whenever
+`NODE_ENV` is not `development`, and a leading dot would name `.vercel.app`,
+which is on the Public Suffix List and which browsers reject. The exact host is a
+subdomain of that suffix, so it is accepted.
 
 **Check:** sign in with a real email and receive the code.
 
