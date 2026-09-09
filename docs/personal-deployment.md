@@ -184,27 +184,63 @@ build produced a working image, and Postgres is reachable.
 
 ### 3. Web on Vercel
 
-Import the repo with **Root Directory = `apps/web`** and the branch set to
-`personal`. Two settings matter:
+Import the repo with **Root Directory = `apps/web`**. The import flow offers no
+branch selector and always takes the repository default, so the first deployment
+comes from `main` and is throwaway; the branch is corrected afterwards.
 
-- Enable **"Include source files outside of the Root Directory"**. The web build
-  imports the scheduler from `apps/backend/src/scheduling` to avoid keeping a
-  fourth copy of the FSRS algorithm, so the build fails without it.
-- Replace the two `REPLACE-WITH-*` hosts in `apps/web/vercel.json` with the
-  Render hostnames. Vercel does not interpolate environment variables into
-  rewrite destinations, so these have to be literal.
+**The production domain is `cardly-nine.vercel.app`.** `cardly.vercel.app` was
+already taken, so Vercel appended a suffix. The name is not knowable in advance,
+and eleven environment variables across Vercel and both Render services carry it,
+so read it from Settings → Environments → Production → Domains before filling any
+of them in.
+
+Settings that matter, all under Settings → Build and Deployment → Root Directory:
+
+- Enable **"Include files outside the root directory in the Build Step"**. The
+  web build imports the scheduler from `apps/backend/src/scheduling` to avoid
+  keeping a fourth copy of the FSRS algorithm, so the build fails without it.
+- Disable **"Skip deployments when there are no changes to the root
+  directory"**. Vercel decides that from the root directory alone and cannot see
+  the `apps/backend/src/scheduling` import, so a scheduler change would ship a
+  web app whose review behavior differs from what was deployed.
+
+Also replace the two `REPLACE-WITH-*` hosts in `apps/web/vercel.json` with the
+Render hostnames. Vercel does not interpolate environment variables into rewrite
+destinations, so these have to be literal.
 
 Environment variables:
 
 ```
-VITE_API_BASE_URL=https://<project>.vercel.app/v1
-VITE_AUTH_BASE_URL=https://<project>.vercel.app/auth
-VITE_APP_BASE_URL=https://<project>.vercel.app
+VITE_API_BASE_URL=https://cardly-nine.vercel.app/v1
+VITE_AUTH_BASE_URL=https://cardly-nine.vercel.app/auth
+VITE_APP_BASE_URL=https://cardly-nine.vercel.app
 ```
 
-These must be absolute origins, not paths: `buildLoginUrl` in
-`apps/web/src/api/authUrls.ts` calls `new URL()` on the auth base, which throws
-on a relative value.
+Three traps here, all of which cost a round trip the first time:
+
+1. **Type must be `Config`, not `Secret`.** Vercel refuses to save a `VITE_`
+   variable as a secret, because the prefix means Vite compiles the value into
+   the browser bundle. It is right to refuse: these are public URLs. A variable
+   already saved as `Secret` cannot be converted, so it has to be deleted and
+   recreated.
+2. **Vercel pre-fills twelve variables scraped from the root `.env.example`** —
+   `MIGRATION_DATABASE_URL`, `DATABASE_URL`, the role passwords, `COOKIE_DOMAIN`
+   and so on. Not one of them belongs to the web build; none carries a `VITE_`
+   prefix, so Vite ignores them all. Remove all twelve rather than leaving
+   database credentials parked in a frontend project.
+3. **They must be absolute origins, not paths.** `buildLoginUrl` in
+   `apps/web/src/api/authUrls.ts` calls `new URL()` on the auth base, which
+   throws on a relative value.
+
+Then point production at this branch: Settings → **Environments** → Production →
+Branch Tracking → `personal`. It is not under Settings → Git, where a production
+branch used to live.
+
+**Redeploy will not pick the new branch up.** The dialog says it plainly —
+"Create a new deployment with the selected deployment's source code and the
+latest project settings" — so it rebuilds the old `main` commit with new
+settings. Branch tracking only governs deployments triggered by a push. Push a
+commit to `personal` to get the first correct production build.
 
 **Check:** the app loads, and the network tab shows `/v1/...` requests answered
 by the Vercel origin rather than by Render directly.
@@ -216,7 +252,7 @@ Create the user pool and app client, then set on both Render services:
 `ALLOWED_REDIRECT_URIS` and `BACKEND_ALLOWED_ORIGINS` to the Vercel origin.
 
 Set `COOKIE_DOMAIN` to the bare Vercel hostname with **no leading dot**, for
-example `cardly.vercel.app`. Two constraints meet here: `validateEnv` in
+example `cardly-nine.vercel.app`. Two constraints meet here: `validateEnv` in
 `apps/auth/src/index.ts` refuses to start without the variable whenever
 `NODE_ENV` is not `development`, and a leading dot would name `.vercel.app`,
 which is on the Public Suffix List and which browsers reject. The exact host is a
