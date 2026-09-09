@@ -141,18 +141,25 @@ Both connection strings are already built and verified in
 ### 2. Backend on Render
 
 Apply `render.yaml` as a Blueprint. Render prompts for every `sync: false`
-value. For this step only, override `AUTH_MODE` to `none` and add
-`ALLOW_INSECURE_LOCAL_AUTH=true`, so the pipeline can be proven before Cognito
-exists.
+value. `AUTH_MODE` is not among them: it is a static `cognito` in the blueprint
+and stays that way.
+
+Cognito does not exist yet at this point, so fill `COGNITO_USER_POOL_ID` and
+`COGNITO_CLIENT_ID` with placeholders and correct them in step 4. That works
+because `getAuthConfig` only validates the mode string, the Cognito JWT verifier
+is built lazily on the first authenticated request, and `/v1/health` is
+unauthenticated. The service boots and reports healthy on placeholder identity
+config.
 
 **Check:** `GET https://<backend>.onrender.com/v1/health` returns
 `{"status":"ok", ...}` with a `dbTime`. That proves the container booted, the
 build produced a working image, and Postgres is reachable.
 
-> `AUTH_MODE=none` makes every request the user `local` with no credential
-> checked at all. On a public URL that means anyone holding the link is you. It
-> exists here to isolate "does the pipeline work" from "does auth work", and
-> step 5 removes it. Do not share the URL until then.
+> An earlier draft of this runbook used `AUTH_MODE=none` for this step, which
+> makes every request the user `local` with no credential checked at all. That
+> was never necessary: nothing in this check touches authentication. The
+> placeholder route above proves exactly the same things without ever exposing an
+> open URL, so `none` stays out of this deployment entirely.
 
 ### 3. Web on Vercel
 

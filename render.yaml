@@ -23,9 +23,9 @@ services:
         value: production
       - key: PORT
         value: 8080
-      # AUTH_MODE=cognito is the real setting. Step 2 of the deployment runbook
-      # temporarily uses `none` to prove the pipeline; docs/personal-deployment.md
-      # explains why that must not survive past step 5.
+      # Stays cognito at every step. Step 2 of the runbook boots with placeholder
+      # Cognito values instead, because the verifier is lazy and /v1/health is
+      # unauthenticated, so no insecure AUTH_MODE=none window is ever needed.
       - key: AUTH_MODE
         value: cognito
       - key: DATABASE_URL
