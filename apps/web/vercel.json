@@ -6,11 +6,11 @@
   "rewrites": [
     {
       "source": "/v1/:path*",
-      "destination": "https://REPLACE-WITH-BACKEND-HOST.onrender.com/v1/:path*"
+      "destination": "https://cardly-backend-yz2m.onrender.com/v1/:path*"
     },
     {
       "source": "/auth/:path*",
-      "destination": "https://REPLACE-WITH-AUTH-HOST.onrender.com/:path*"
+      "destination": "https://cardly-auth.onrender.com/:path*"
     },
     {
       "source": "/:path*",

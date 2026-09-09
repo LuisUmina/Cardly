@@ -138,6 +138,27 @@ another user's request, and the direct endpoint would have been mandatory.
 Both connection strings are already built and verified in
 `.env.personal-deployment`.
 
+**Keep `?sslmode=require` in both.** It is load-bearing, not decoration.
+`createDatabasePool` in `apps/backend/src/database/core.ts` passes
+`ssl: process.env.DB_SECRET_ARN ? true : false`, so outside AWS it hands the
+driver an explicit `ssl: false`. Connections still get TLS only because
+node-postgres merges the parsed connection string over the explicit options, so
+`sslmode=require` wins. Drop it from the URL and the pool would try plaintext
+against a provider that requires TLS. Four modules share that same
+`DB_SECRET_ARN ? true : false` shape (`database/core.ts`,
+`database/sessionAdvisoryLock.ts`, `productAnalytics/writer.ts`, and
+`apps/auth/src/db.ts`), and all of them are fine for the same reason.
+
+**Deployed services (verified 2026-09-09):**
+
+- backend: `https://cardly-backend-yz2m.onrender.com` — `/v1/health` returns
+  `status: ok` with a live `dbTime`
+- auth: `https://cardly-auth.onrender.com` — `/health` returns `ok: true`
+
+Render appended a random suffix to the backend service name but not to the auth
+one, so neither hostname can be assumed from the service name; read both from
+the Render dashboard.
+
 ### 2. Backend on Render
 
 Apply `render.yaml` as a Blueprint. Render prompts for every `sync: false`
