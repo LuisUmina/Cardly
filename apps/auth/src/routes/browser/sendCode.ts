@@ -13,7 +13,7 @@
 import { randomBytes, randomInt } from "node:crypto";
 import { Hono } from "hono";
 import { setCookie } from "hono/cookie";
-import { initiateEmailOtp, signInWithPassword, type TokenResult } from "../../server/cognito/cognitoAuth.js";
+import { initiateEmailOtp, signInWithPassword, type TokenResult } from "../../server/identity/supabaseAuth.js";
 import { type AuthAppEnv, getRequestId, jsonAuthError } from "../../server/apiErrors.js";
 import {
   reportSignInCodeRequested,

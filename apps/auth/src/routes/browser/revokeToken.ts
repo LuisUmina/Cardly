@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import { clearAuthAnalyticsVisitor } from "../../server/analytics/visitorSession.js";
 import { clearBrowserSessionCookies } from "../../server/browserSession.js";
 import { type AuthAppEnv, getRequestId, jsonAuthError } from "../../server/apiErrors.js";
-import { revokeToken } from "../../server/cognito/cognitoAuth.js";
+import { revokeToken } from "../../server/identity/supabaseAuth.js";
 import { log } from "../../server/logger.js";
 
 const app = new Hono<AuthAppEnv>();

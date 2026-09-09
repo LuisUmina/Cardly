@@ -11,9 +11,10 @@ import { createApp } from "./app.js";
 
 const validateEnv = (): void => {
   const errors: Array<string> = [];
-  if (!process.env.COGNITO_USER_POOL_ID) errors.push("COGNITO_USER_POOL_ID");
-  if (!process.env.COGNITO_CLIENT_ID) errors.push("COGNITO_CLIENT_ID");
-  if (!process.env.COGNITO_REGION) errors.push("COGNITO_REGION");
+  // SUPABASE_JWT_SECRET is deliberately absent: it is the legacy HS256 fallback,
+  // and a project on asymmetric signing keys must be able to run without it.
+  if (!process.env.SUPABASE_URL) errors.push("SUPABASE_URL");
+  if (!process.env.SUPABASE_ANON_KEY) errors.push("SUPABASE_ANON_KEY");
   if (!process.env.SESSION_ENCRYPTION_KEY) errors.push("SESSION_ENCRYPTION_KEY");
   if (!process.env.ALLOWED_REDIRECT_URIS) errors.push("ALLOWED_REDIRECT_URIS");
   if (!process.env.COOKIE_DOMAIN) errors.push("COOKIE_DOMAIN");

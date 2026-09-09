@@ -1,18 +1,8 @@
-import { AsyncLocalStorage } from "node:async_hooks";
-import { CognitoJwtVerifier } from "aws-jwt-verify";
 import {
-  CognitoJwtInvalidClientIdError,
-  CognitoJwtInvalidTokenUseError,
-  KidNotFoundInJwksError,
-  JwtInvalidClaimError,
-  JwtInvalidSignatureAlgorithmError,
-  JwtInvalidSignatureError,
-  JwtParseError,
-  JwtWithoutValidKidError,
-  WaitPeriodNotYetEndedJwkError,
-} from "aws-jwt-verify/error";
-import { SimpleFetcher, type Fetcher } from "aws-jwt-verify/https";
-import { SimpleJwksCache } from "aws-jwt-verify/jwk";
+  isRejectedIdentityToken,
+  runWithIdentityJwksAbortSignal,
+  verifyIdentityToken,
+} from "./identityTokenVerifier";
 import { authenticateAgentApiKey } from "../agent/apiKeys";
 import { getAuthConfig } from "./config";
 import { HttpError } from "../shared/errors";
@@ -45,7 +35,6 @@ export type AuthRequest = Readonly<{
 type VerifiedIdTokenPayload = Readonly<{
   sub: string;
   email?: unknown;
-  "cognito:username"?: unknown;
 }>;
 
 export type AuthenticatedUserIdentity = Readonly<{
@@ -55,14 +44,18 @@ export type AuthenticatedUserIdentity = Readonly<{
 }>;
 
 export function isTerminalJwtAuthFailure(error: unknown): boolean {
-  return error instanceof JwtParseError
-    || error instanceof JwtInvalidSignatureError
-    || error instanceof JwtInvalidSignatureAlgorithmError
-    || error instanceof JwtInvalidClaimError
-    || error instanceof CognitoJwtInvalidTokenUseError
-    || error instanceof CognitoJwtInvalidClientIdError
-    || error instanceof JwtWithoutValidKidError
-    || error instanceof KidNotFoundInJwksError;
+  return isRejectedIdentityToken(error);
+}
+
+/**
+ * A JWKS fetch that timed out says nothing about the token, so it must not sign
+ * the caller out. It maps to the same 503 the Cognito wiring used for a JWKS
+ * cooldown, which tells clients to retry rather than re-authenticate.
+ */
+function isTransientJwtVerificationFailure(error: unknown): boolean {
+  return error instanceof Error
+    && "code" in error
+    && error.code === "ERR_JWKS_TIMEOUT";
 }
 
 export function createJwtAuthBoundaryError(error: unknown): AuthError | HttpError | null {
@@ -71,7 +64,7 @@ export function createJwtAuthBoundaryError(error: unknown): AuthError | HttpErro
     return new AuthError(401, `Invalid token: ${message}`);
   }
 
-  if (error instanceof WaitPeriodNotYetEndedJwkError) {
+  if (isTransientJwtVerificationFailure(error)) {
     return new HttpError(
       503,
       "Authentication verification is temporarily unavailable. Retry shortly.",
@@ -80,76 +73,6 @@ export function createJwtAuthBoundaryError(error: unknown): AuthError | HttpErro
   }
 
   return null;
-}
-
-let verifier: ReturnType<typeof CognitoJwtVerifier.create> | undefined;
-let directRequestVerifier:
-  ReturnType<typeof CognitoJwtVerifier.create> | undefined;
-const directAuthenticationAbortSignalStorage =
-  new AsyncLocalStorage<AbortSignal>();
-
-class DirectAuthenticationJwksFetcher implements Fetcher {
-  readonly #fetcher: Fetcher;
-
-  constructor(fetcher: Fetcher) {
-    this.#fetcher = fetcher;
-  }
-
-  readonly fetch: Fetcher["fetch"] = (
-    uri,
-    requestOptions,
-    data,
-  ) => {
-    const abortSignal = directAuthenticationAbortSignalStorage.getStore();
-    return this.#fetcher.fetch(
-      uri,
-      abortSignal === undefined
-        ? requestOptions
-        : { ...requestOptions, signal: abortSignal },
-      data,
-    );
-  };
-}
-
-function getVerifierConfig(): Readonly<{
-  userPoolId: string;
-  tokenUse: "id";
-  clientId: string;
-}> {
-  const userPoolId = process.env.COGNITO_USER_POOL_ID;
-  const clientId = process.env.COGNITO_CLIENT_ID;
-  if (!userPoolId || !clientId) {
-    throw new Error("COGNITO_USER_POOL_ID and COGNITO_CLIENT_ID are required when AUTH_MODE=cognito");
-  }
-
-  return {
-    userPoolId,
-    tokenUse: "id",
-    clientId,
-  };
-}
-
-function getVerifier(): ReturnType<typeof CognitoJwtVerifier.create> {
-  if (verifier) return verifier;
-
-  verifier = CognitoJwtVerifier.create(getVerifierConfig());
-
-  return verifier;
-}
-
-function getDirectRequestVerifier():
-  ReturnType<typeof CognitoJwtVerifier.create> {
-  if (directRequestVerifier) return directRequestVerifier;
-
-  directRequestVerifier = CognitoJwtVerifier.create(
-    getVerifierConfig(),
-    {
-      jwksCache: new SimpleJwksCache({
-        fetcher: new DirectAuthenticationJwksFetcher(new SimpleFetcher()),
-      }),
-    },
-  );
-  return directRequestVerifier;
 }
 
 type ParsedAuthorizationHeader =
@@ -193,29 +116,32 @@ function parseAuthorizationHeader(authorizationHeader: string | undefined): Pars
   throw new AuthError(401, "Authorization header must use Bearer, Guest, or ApiKey scheme");
 }
 
+/**
+ * `cognitoUsername` keeps its name but now carries the provider's user id.
+ *
+ * It has exactly one consumer, `deleteCognitoUser` in account deletion, which
+ * needs whatever handle identifies the account at the identity provider. For
+ * Cognito that was the `cognito:username` claim; for Supabase it is `sub`, which
+ * is what the admin delete endpoint addresses. Renaming the field would reach
+ * across `accountDeletion.ts`, the auth result type and every construction site
+ * for no behavior change.
+ */
 export function extractVerifiedIdTokenIdentity(payload: VerifiedIdTokenPayload): AuthenticatedUserIdentity {
   const email = typeof payload.email === "string" ? payload.email.trim() : "";
   if (email === "") {
-    throw new Error("Cognito ID token is missing email claim");
+    throw new Error("Identity token is missing email claim");
   }
-
-  const cognitoUsername = typeof payload["cognito:username"] === "string"
-    ? payload["cognito:username"].trim()
-    : "";
 
   return {
     userId: payload.sub,
     email,
-    cognitoUsername: cognitoUsername === "" ? null : cognitoUsername,
+    cognitoUsername: payload.sub,
   };
 }
 
-async function verifyIdTokenWithVerifier(
-  token: string,
-  tokenVerifier: ReturnType<typeof CognitoJwtVerifier.create>,
-): Promise<AuthenticatedUserIdentity> {
+async function verifyIdTokenPayload(token: string): Promise<AuthenticatedUserIdentity> {
   try {
-    const payload = await tokenVerifier.verify(token);
+    const payload = await verifyIdentityToken(token);
     return extractVerifiedIdTokenIdentity(payload as VerifiedIdTokenPayload);
   } catch (err) {
     const boundaryError = createJwtAuthBoundaryError(err);
@@ -228,16 +154,16 @@ async function verifyIdTokenWithVerifier(
 }
 
 async function verifyIdToken(token: string): Promise<AuthenticatedUserIdentity> {
-  return verifyIdTokenWithVerifier(token, getVerifier());
+  return verifyIdTokenPayload(token);
 }
 
 async function verifyIdTokenForDirectRequest(
   token: string,
   abortSignal: AbortSignal,
 ): Promise<AuthenticatedUserIdentity> {
-  return directAuthenticationAbortSignalStorage.run(
+  return runWithIdentityJwksAbortSignal(
     abortSignal,
-    () => verifyIdTokenWithVerifier(token, getDirectRequestVerifier()),
+    () => verifyIdTokenPayload(token),
   );
 }
 

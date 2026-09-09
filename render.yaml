@@ -30,11 +30,12 @@ services:
         value: cognito
       - key: DATABASE_URL
         sync: false
-      - key: COGNITO_USER_POOL_ID
+      # Supabase project URL, e.g. https://abcdefgh.supabase.co
+      - key: SUPABASE_URL
         sync: false
-      - key: COGNITO_CLIENT_ID
-        sync: false
-      - key: COGNITO_REGION
+      # Only the account-deletion path uses this. It bypasses row-level security,
+      # so it lives here and never in the auth service, which deletes no users.
+      - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       # The self-hosted replacement for Secrets Manager. Any long random string;
       # changing it invalidates every outstanding browser CSRF token.
@@ -67,11 +68,11 @@ services:
         value: 8081
       - key: DATABASE_URL
         sync: false
-      - key: COGNITO_USER_POOL_ID
+      - key: SUPABASE_URL
         sync: false
-      - key: COGNITO_CLIENT_ID
-        sync: false
-      - key: COGNITO_REGION
+      # The publishable key. Every call this service makes is a public auth
+      # endpoint, so it never needs the service-role key.
+      - key: SUPABASE_ANON_KEY
         sync: false
       # 32 random bytes as hex. Generate with: openssl rand -hex 32
       - key: SESSION_ENCRYPTION_KEY

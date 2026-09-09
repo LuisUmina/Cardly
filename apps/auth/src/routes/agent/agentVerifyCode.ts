@@ -22,7 +22,7 @@ import {
   markAgentOtpChallengeUsed,
   type AgentOtpChallengeLookup,
 } from "../../server/agent/agentOtpChallenges.js";
-import { signInWithPassword, verifyEmailOtp, type TokenResult } from "../../server/cognito/cognitoAuth.js";
+import { signInWithPassword, verifyEmailOtp, type TokenResult } from "../../server/identity/supabaseAuth.js";
 import { getNormalizedCognitoErrorType } from "../../server/cognito/cognitoErrors.js";
 import { log } from "../../server/logger.js";
 import { getPublicApiBaseUrl } from "../../server/publicUrls.js";

@@ -1,13 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  FetchError,
-  JwksValidationError,
-  JwtExpiredError,
-  JwtInvalidSignatureError,
-  KidNotFoundInJwksError,
-  WaitPeriodNotYetEndedJwkError,
-} from "aws-jwt-verify/error";
+import { errors as joseErrors } from "jose";
 import { Hono } from "hono";
 import { type ContentfulStatusCode } from "hono/utils/http-status";
 import {
@@ -24,15 +17,18 @@ import type { AppEnv } from "../server/app";
 import { createSystemRoutes } from "../routes/system";
 
 test("isTerminalJwtAuthFailure returns true for invalid client tokens", () => {
-  assert.equal(isTerminalJwtAuthFailure(new JwtExpiredError("expired", "exp", "now")), true);
-  assert.equal(isTerminalJwtAuthFailure(new JwtInvalidSignatureError("invalid signature")), true);
-  assert.equal(isTerminalJwtAuthFailure(new KidNotFoundInJwksError("kid missing")), true);
+  assert.equal(isTerminalJwtAuthFailure(new joseErrors.JWTExpired("expired", {})), true);
+  assert.equal(isTerminalJwtAuthFailure(new joseErrors.JWSSignatureVerificationFailed()), true);
+  // A `kid` absent from the published set is an unusable token rather than a
+  // transient lookup failure, which is how the Cognito verifier treated
+  // KidNotFoundInJwksError before this replaced it.
+  assert.equal(isTerminalJwtAuthFailure(new joseErrors.JWKSNoMatchingKey()), true);
 });
 
 test("isTerminalJwtAuthFailure returns false for JWKS fetch and validation failures", () => {
-  assert.equal(isTerminalJwtAuthFailure(new FetchError("https://example.com/jwks", "network down")), false);
-  assert.equal(isTerminalJwtAuthFailure(new JwksValidationError("jwks invalid")), false);
-  assert.equal(isTerminalJwtAuthFailure(new WaitPeriodNotYetEndedJwkError("jwks wait period active")), false);
+  assert.equal(isTerminalJwtAuthFailure(new joseErrors.JWKSTimeout()), false);
+  assert.equal(isTerminalJwtAuthFailure(new joseErrors.JWKSInvalid("jwks invalid")), false);
+  assert.equal(isTerminalJwtAuthFailure(new Error("network down")), false);
 });
 
 test("isTerminalJwtAuthFailure returns false for unknown errors", () => {
@@ -40,9 +36,7 @@ test("isTerminalJwtAuthFailure returns false for unknown errors", () => {
 });
 
 test("createJwtAuthBoundaryError returns retryable 503 for JWKS backoff", () => {
-  const error = createJwtAuthBoundaryError(
-    new WaitPeriodNotYetEndedJwkError("jwks wait period active"),
-  );
+  const error = createJwtAuthBoundaryError(new joseErrors.JWKSTimeout());
 
   assert.ok(error instanceof HttpError);
   assert.equal(error.statusCode, 503);
@@ -84,7 +78,9 @@ test("GET /me returns 500 when session verification fails with a non-terminal ve
   app.route("/", createSystemRoutes({
     allowedOrigins: [],
     loadRequestContextFromRequestFn: async () => {
-      throw new FetchError("https://example.com/jwks", "network down");
+      // Non-terminal and not the retryable timeout either, so the boundary
+      // classifies it as neither 401 nor 503 and it surfaces as 500.
+      throw new joseErrors.JWKSInvalid("jwks invalid");
     },
   }));
 

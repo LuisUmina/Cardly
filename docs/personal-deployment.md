@@ -23,7 +23,7 @@ Vercel (Hobby)     SPA + rewrites for /v1/* and /auth/*  ─┐
                                                           │ same origin,
 Render (free)      cardly-backend, cardly-auth  ←─────────┘ so session cookies work
 Neon (free)        Postgres
-AWS Cognito        identity only (EMAIL_OTP), free at this scale
+Supabase Auth      identity only (email OTP), no AWS account anywhere
 ```
 
 The rewrites in `apps/web/vercel.json` are the load-bearing part. The browser
@@ -40,20 +40,23 @@ a silent login loop rather than as an error.
 | CSRF / chat-live secrets | Secrets Manager ARN | `BACKEND_CSRF_SECRET` env var |
 | Web/API/auth origins | `app.` / `api.` / `auth.` subdomains | one Vercel origin + rewrites |
 | Postgres | RDS in a private VPC | Neon |
+| Identity | Cognito user pool | Supabase Auth, verified through its JWKS |
 
-The only source change this required is an environment-variable fallback in
+Two source changes carry all of this. An environment-variable fallback in
 `apps/backend/src/aws/secrets.ts`, plus the two callers that used to refuse a
-missing ARN before that fallback could be reached. Everything else was already
-environment-driven, because upstream supports self-hosting.
+missing ARN before that fallback could be reached; and the identity provider
+swap described under step 4. Everything else was already environment-driven,
+because upstream supports self-hosting.
 
 ## Prerequisites
 
 1. Neon project (Postgres 17+).
 2. Render account.
 3. Vercel account.
-4. AWS account with a Cognito user pool that has `EMAIL_OTP` sign-in enabled,
-   plus an app client. **Confirm the free tier covers passwordless `EMAIL_OTP`
-   before relying on it** — the tier that includes it has changed over time.
+4. Supabase project, used only as the identity provider. Its own database is
+   irrelevant here; app data lives in Neon. That separation is not a preference:
+   this project owns a schema literally named `auth` with 16 tables, and Supabase
+   manages a schema of that name for its own auth service.
 5. Node 24 locally. The psql client is not required; see step 1.
 
 Generated secrets live in `.env.personal-deployment` at the repository root,
@@ -163,14 +166,15 @@ the Render dashboard.
 
 Apply `render.yaml` as a Blueprint. Render prompts for every `sync: false`
 value. `AUTH_MODE` is not among them: it is a static `cognito` in the blueprint
-and stays that way.
+and stays that way. The name outlived the provider — it selects "verify real
+identity tokens" as opposed to `none`, and the only other accepted value is
+`none`, so changing it would be a rename with a failure mode and no benefit.
 
-Cognito does not exist yet at this point, so fill `COGNITO_USER_POOL_ID` and
-`COGNITO_CLIENT_ID` with placeholders and correct them in step 4. That works
-because `getAuthConfig` only validates the mode string, the Cognito JWT verifier
-is built lazily on the first authenticated request, and `/v1/health` is
-unauthenticated. The service boots and reports healthy on placeholder identity
-config.
+The identity provider does not exist yet at this point, so fill `SUPABASE_URL`
+with a placeholder and correct it in step 4. That works because `getAuthConfig`
+only validates the mode string, the JWKS verifier is built lazily on the first
+authenticated request, and `/v1/health` is unauthenticated. The service boots and
+reports healthy on placeholder identity config.
 
 **Check:** `GET https://<backend>.onrender.com/v1/health` returns
 `{"status":"ok", ...}` with a `dbTime`. That proves the container booted, the
@@ -267,11 +271,45 @@ every chunk. Vite substituted the values at build time and dropped the dead
 branch. Had the variables been missing, that fallback would still be there and
 the app would be calling a hostname that does not exist.
 
-### 4. Cognito
+### 4. Identity provider
 
-Create the user pool and app client, then set on both Render services:
-`COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `COGNITO_REGION`. Set
-`ALLOWED_REDIRECT_URIS` and `BACKEND_ALLOWED_ORIGINS` to the Vercel origin.
+Cognito is replaced by Supabase Auth. The whole dependency was six functions in
+one file plus two JWT verifiers, because nothing downstream knows which provider
+issued a token: it reads `sub` and `email` and nothing else.
+
+What changed:
+
+| File | Change |
+| --- | --- |
+| `apps/auth/src/server/identity/supabaseAuth.ts` | New. The same six exported functions, against Supabase's auth endpoints |
+| `apps/auth/src/server/identity/tokenVerifier.ts` | New. JWKS verification with `jose` |
+| `apps/backend/src/auth/identityTokenVerifier.ts` | New. Same, for the backend |
+| 8 route files in `apps/auth/src/routes` | One import line each |
+| `apps/backend/src/auth/index.ts` | Verifier swapped; `cognitoUsername` now carries `sub` |
+| `apps/backend/src/auth/cognitoUsers.ts` | Deletes through Supabase's admin users endpoint |
+
+Three decisions worth knowing:
+
+- **The provider raises the existing typed-error shape.** Four route modules
+  already branch on `getNormalizedCognitoErrorType` and
+  `isCognitoInvalidEmailError`, so Supabase failures are mapped onto the same
+  `cognitoType` vocabulary and every one of those branches keeps working
+  untouched. The naming is imperfect; a rename would touch four route files for
+  no behavior change.
+- **`aws-jwt-verify` could not be reused.** It verifies RSA against Cognito's
+  JWKS layout, and Supabase signs with ES256. `jose` covers ES256, RS256 and
+  HS256, so it replaces it in both services.
+- **`cognitoAuth.ts` is left in place, unused.** Deleting it would conflict with
+  every upstream change to a file this branch no longer calls.
+
+Configuration. On **both** Render services: `SUPABASE_URL`. On `cardly-auth`
+only: `SUPABASE_ANON_KEY`. On `cardly-backend` only: `SUPABASE_SERVICE_ROLE_KEY`,
+which is used by exactly one path, account deletion, and which bypasses row-level
+security — so it never goes near the auth service, which deletes no users.
+
+Prefer asymmetric signing keys in the Supabase project, so neither service holds
+a secret that can mint tokens. `SUPABASE_JWT_SECRET` exists only for a project
+still on legacy HS256 keys and should stay unset.
 
 Set `COOKIE_DOMAIN` to the bare Vercel hostname with **no leading dot**, for
 example `cardly-nine.vercel.app`. Two constraints meet here: `validateEnv` in
@@ -281,10 +319,6 @@ which is on the Public Suffix List and which browsers reject. The exact host is 
 subdomain of that suffix, so it is accepted.
 
 **Check:** sign in with a real email and receive the code.
-
-### 5. Close the hole
-
-Set `AUTH_MODE=cognito` and remove `ALLOW_INSECURE_LOCAL_AUTH` from the backend.
 
 **Check:** a request with no credential returns 401. This step is not optional.
 
@@ -328,11 +362,7 @@ Recorded here so the deployment is not blocked on them.
    `region: "auto"` and path-style addressing.
 4. **Cardly branding.** Roughly 20 files still carry the upstream name, domain
    and legal links.
-5. **Replace Cognito.** The whole dependency is six functions in
-   `apps/auth/src/server/cognito/cognitoAuth.ts` plus two JWT verifiers, and the
-   rest of the system reads only `sub` and `email` from the token. Supabase Auth
-   maps onto those six almost one to one. Doing this removes AWS entirely.
-6. **Chat worker and cron jobs.** `chat/worker/invoke.ts` still dispatches
+5. **Chat worker and cron jobs.** `chat/worker/invoke.ts` still dispatches
    through `InvokeCommand`, and two scheduled jobs run at `rate(1 minute)` under
    EventBridge. On a long-lived container both get simpler: an in-process call
    and `setInterval`. Only needed once AI chat is switched on.

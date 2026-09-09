@@ -28,6 +28,7 @@
     "@sentry/aws-serverless": "^10.73.0",
     "aws-jwt-verify": "^5.2.1",
     "hono": "^4.13.5",
+    "jose": "^6.2.12",
     "openai": "^7.9.0",
     "pg": "^8.23.0",
     "sharp": "^0.35.4",

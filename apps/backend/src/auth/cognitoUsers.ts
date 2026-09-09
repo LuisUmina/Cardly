@@ -1,56 +1,67 @@
-import {
-  AdminDeleteUserCommand,
-  CognitoIdentityProviderClient,
-  UserNotFoundException,
-} from "@aws-sdk/client-cognito-identity-provider";
+/**
+ * Identity-provider account deletion.
+ *
+ * The file keeps its name and its exported `deleteCognitoUser` because account
+ * deletion injects that function by name through
+ * `AccountDeletionDependencies`; only the provider behind it changed, from
+ * Cognito's `AdminDeleteUser` to Supabase's admin users endpoint.
+ *
+ * This is the one path that needs the service-role key. That key bypasses
+ * row-level security and can delete any account, so it stays out of the auth
+ * service, which never deletes users, and is read lazily here rather than at
+ * module load, so a deployment that never deletes an account never needs it set.
+ */
 import { HttpError } from "../shared/errors";
 
-let cognitoClient: CognitoIdentityProviderClient | undefined;
-
-function getCognitoUserPoolId(): string {
-  const userPoolId = process.env.COGNITO_USER_POOL_ID?.trim() ?? "";
-  if (userPoolId === "") {
-    throw new Error("COGNITO_USER_POOL_ID is required for Cognito user deletion");
+function getSupabaseUrl(): string {
+  const value = process.env.SUPABASE_URL?.trim() ?? "";
+  if (value === "") {
+    throw new Error("SUPABASE_URL is required for identity user deletion");
   }
 
-  return userPoolId;
+  return value.replace(/\/+$/, "");
 }
 
-function getCognitoRegion(): string | undefined {
-  const region = process.env.COGNITO_REGION?.trim() ?? "";
-  return region === "" ? undefined : region;
-}
-
-function getCognitoClient(): CognitoIdentityProviderClient {
-  if (cognitoClient !== undefined) {
-    return cognitoClient;
+function getSupabaseServiceRoleKey(): string {
+  const value = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ?? "";
+  if (value === "") {
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY is required for identity user deletion");
   }
 
-  cognitoClient = new CognitoIdentityProviderClient({
-    region: getCognitoRegion(),
-  });
-  return cognitoClient;
+  return value;
 }
 
 export async function deleteCognitoUser(cognitoUsername: string): Promise<void> {
-  if (cognitoUsername.trim() === "") {
+  const userId = cognitoUsername.trim();
+  if (userId === "") {
     throw new HttpError(
       500,
-      "Account deletion could not resolve the Cognito username for this user.",
+      "Account deletion could not resolve the identity provider user for this user.",
       "ACCOUNT_DELETE_IDENTITY_DELETE_FAILED",
     );
   }
 
-  try {
-    await getCognitoClient().send(new AdminDeleteUserCommand({
-      UserPoolId: getCognitoUserPoolId(),
-      Username: cognitoUsername,
-    }));
-  } catch (error) {
-    if (error instanceof UserNotFoundException) {
-      return;
-    }
+  const serviceRoleKey = getSupabaseServiceRoleKey();
+  const response = await fetch(
+    `${getSupabaseUrl()}/auth/v1/admin/users/${encodeURIComponent(userId)}`,
+    {
+      method: "DELETE",
+      headers: {
+        apikey: serviceRoleKey,
+        Authorization: `Bearer ${serviceRoleKey}`,
+      },
+    },
+  );
 
-    throw error;
+  // An account that is already gone is the state this function exists to reach,
+  // so a 404 is success. Deletion is also retried after partial failures, and
+  // treating it as an error would strand every retry.
+  if (response.ok || response.status === 404) {
+    return;
   }
+
+  const body = await response.text();
+  throw new Error(
+    `Supabase admin user deletion failed with HTTP ${response.status}: ${body}`,
+  );
 }
