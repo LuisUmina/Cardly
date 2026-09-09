@@ -1,0 +1,20 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "source": "/v1/:path*",
+      "destination": "https://REPLACE-WITH-BACKEND-HOST.onrender.com/v1/:path*"
+    },
+    {
+      "source": "/auth/:path*",
+      "destination": "https://REPLACE-WITH-AUTH-HOST.onrender.com/:path*"
+    },
+    {
+      "source": "/:path*",
+      "destination": "/index.html"
+    }
+  ]
+}

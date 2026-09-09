@@ -1,0 +1,83 @@
+# Render Blueprint for the personal free-tier deployment.
+#
+# This file belongs to the `personal` branch only. `main` stays an exact mirror
+# of the upstream project, which deploys to AWS through infra/aws instead.
+#
+# Values marked `sync: false` are never stored in this repository: Render asks
+# for them when the blueprint is applied, and keeps them in its own secret store.
+services:
+  - type: web
+    name: cardly-backend
+    runtime: docker
+    plan: free
+    branch: personal
+    dockerfilePath: apps/backend/Dockerfile
+    dockerContext: apps/backend
+    # Hits the database, so a healthy check means the process booted AND reached Postgres.
+    healthCheckPath: /v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8080
+      # AUTH_MODE=cognito is the real setting. Step 2 of the deployment runbook
+      # temporarily uses `none` to prove the pipeline; docs/personal-deployment.md
+      # explains why that must not survive past step 5.
+      - key: AUTH_MODE
+        value: cognito
+      - key: DATABASE_URL
+        sync: false
+      - key: COGNITO_USER_POOL_ID
+        sync: false
+      - key: COGNITO_CLIENT_ID
+        sync: false
+      - key: COGNITO_REGION
+        sync: false
+      # The self-hosted replacement for Secrets Manager. Any long random string;
+      # changing it invalidates every outstanding browser CSRF token.
+      - key: BACKEND_CSRF_SECRET
+        generateValue: true
+      - key: PUBLIC_APP_BASE_URL
+        sync: false
+      - key: BACKEND_ALLOWED_ORIGINS
+        sync: false
+      - key: PUBLIC_API_BASE_URL
+        sync: false
+      - key: PUBLIC_AUTH_BASE_URL
+        sync: false
+
+  - type: web
+    name: cardly-auth
+    runtime: docker
+    plan: free
+    branch: personal
+    dockerfilePath: apps/auth/Dockerfile
+    dockerContext: apps/auth
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8081
+      - key: DATABASE_URL
+        sync: false
+      - key: COGNITO_USER_POOL_ID
+        sync: false
+      - key: COGNITO_CLIENT_ID
+        sync: false
+      - key: COGNITO_REGION
+        sync: false
+      # 32 random bytes as hex. Generate with: openssl rand -hex 32
+      - key: SESSION_ENCRYPTION_KEY
+        sync: false
+      - key: ALLOWED_REDIRECT_URIS
+        sync: false
+      - key: PUBLIC_AUTH_BASE_URL
+        sync: false
+      - key: PUBLIC_API_BASE_URL
+        sync: false
+      # Deliberately unset: `.vercel.app` is on the Public Suffix List, so a
+      # domain cookie cannot be set for it. Leaving this empty makes the session
+      # cookie host-only for the Vercel hostname, which is what the proxy setup
+      # needs. Set it only once a real apex domain is in play.
+      # - key: COOKIE_DOMAIN

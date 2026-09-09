@@ -39,10 +39,16 @@ function getChatLiveUrl(): string {
   return chatLiveUrl;
 }
 
-function getBackendChatLiveAuthSecretArn(): string {
+/**
+ * Returns the Secrets Manager ARN holding the chat live signing key, or `null`
+ * when none is configured. See `getBackendCsrfSecretArn` in
+ * `auth/requestSecurity.ts`: the refusal belongs to the resolver that can see the
+ * direct `BACKEND_CHAT_LIVE_AUTH_SECRET` variable as well as the ARN.
+ */
+function getBackendChatLiveAuthSecretArn(): string | null {
   const secretArn = process.env.BACKEND_CHAT_LIVE_AUTH_SECRET_ARN;
   if (secretArn === undefined || secretArn.trim() === "") {
-    throw new Error("BACKEND_CHAT_LIVE_AUTH_SECRET_ARN is required for chat live auth");
+    return null;
   }
 
   return secretArn;

@@ -87,10 +87,17 @@ function isMatchingToken(expectedToken: string, actualToken: string): boolean {
   return timingSafeEqual(expectedBytes, actualBytes);
 }
 
-function getBackendCsrfSecretArn(): string {
+/**
+ * Returns the Secrets Manager ARN holding the CSRF signing key, or `null` when
+ * none is configured. A missing ARN is not an error here: a deployment hosted
+ * outside AWS supplies the key through `BACKEND_CSRF_SECRET` instead, and only
+ * `getBackendCsrfSecret` can see both sources, so it owns the refusal when
+ * neither is set.
+ */
+function getBackendCsrfSecretArn(): string | null {
   const secretArn = process.env.BACKEND_CSRF_SECRET_ARN;
   if (secretArn === undefined || secretArn.trim() === "") {
-    throw new Error("BACKEND_CSRF_SECRET_ARN is required for session-based CSRF protection");
+    return null;
   }
 
   return secretArn;

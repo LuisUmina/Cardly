@@ -9,6 +9,32 @@ const secretsClient = new SecretsManagerClient({});
 let resolvedBackendCsrfSecret: string | undefined;
 let resolvedBackendChatLiveAuthSecret: string | undefined;
 
+/**
+ * Reads a plaintext secret held directly in an environment variable.
+ *
+ * The reference AWS deployment keeps these in Secrets Manager and passes the ARN
+ * down. A deployment hosted outside AWS has no Secrets Manager to read and no AWS
+ * credentials to read it with, so it sets the value itself instead. The direct
+ * variable is checked first for exactly that reason: reaching Secrets Manager at
+ * all is what fails there, so the fallback has to come before the call, not after
+ * it. The reference deployment sets only the ARN, so this returns `null` there and
+ * nothing about its behavior changes.
+ */
+function readDirectSecretEnv(envName: string): string | null {
+  const value = process.env[envName];
+  if (value === undefined || value.trim() === "") {
+    return null;
+  }
+
+  return value.trim();
+}
+
+function createMissingSecretSourceError(envName: string, arnEnvName: string): Error {
+  return new Error(
+    `${envName} or ${arnEnvName} is required. Set ${envName} to the secret value when hosting outside AWS, or ${arnEnvName} to a Secrets Manager ARN.`,
+  );
+}
+
 async function loadDatabaseCredentialsSecret(
   secretArn: string,
   abortSignal: AbortSignal | null,
@@ -50,11 +76,21 @@ export async function getDatabaseCredentialsSecretWithAbortSignal(
 }
 
 async function loadBackendCsrfSecret(
-  secretArn: string,
+  secretArn: string | null,
   abortSignal: AbortSignal | null,
 ): Promise<string> {
   if (resolvedBackendCsrfSecret !== undefined) {
     return resolvedBackendCsrfSecret;
+  }
+
+  const directSecret = readDirectSecretEnv("BACKEND_CSRF_SECRET");
+  if (directSecret !== null) {
+    resolvedBackendCsrfSecret = directSecret;
+    return resolvedBackendCsrfSecret;
+  }
+
+  if (secretArn === null) {
+    throw createMissingSecretSourceError("BACKEND_CSRF_SECRET", "BACKEND_CSRF_SECRET_ARN");
   }
 
   abortSignal?.throwIfAborted();
@@ -78,20 +114,33 @@ async function loadBackendCsrfSecret(
   return resolvedBackendCsrfSecret;
 }
 
-export async function getBackendCsrfSecret(secretArn: string): Promise<string> {
+export async function getBackendCsrfSecret(secretArn: string | null): Promise<string> {
   return loadBackendCsrfSecret(secretArn, null);
 }
 
 export async function getBackendCsrfSecretWithAbortSignal(
-  secretArn: string,
+  secretArn: string | null,
   abortSignal: AbortSignal,
 ): Promise<string> {
   return loadBackendCsrfSecret(secretArn, abortSignal);
 }
 
-export async function getBackendChatLiveAuthSecret(secretArn: string): Promise<string> {
+export async function getBackendChatLiveAuthSecret(secretArn: string | null): Promise<string> {
   if (resolvedBackendChatLiveAuthSecret !== undefined) {
     return resolvedBackendChatLiveAuthSecret;
+  }
+
+  const directSecret = readDirectSecretEnv("BACKEND_CHAT_LIVE_AUTH_SECRET");
+  if (directSecret !== null) {
+    resolvedBackendChatLiveAuthSecret = directSecret;
+    return resolvedBackendChatLiveAuthSecret;
+  }
+
+  if (secretArn === null) {
+    throw createMissingSecretSourceError(
+      "BACKEND_CHAT_LIVE_AUTH_SECRET",
+      "BACKEND_CHAT_LIVE_AUTH_SECRET_ARN",
+    );
   }
 
   const response = await secretsClient.send(new GetSecretValueCommand({ SecretId: secretArn }));
