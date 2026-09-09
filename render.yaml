@@ -10,6 +10,9 @@ services:
     name: cardly-backend
     runtime: docker
     plan: free
+    # Matches the Neon project region. Postgres latency is on the hot path for
+    # every sync request, so the two must not sit on different coasts.
+    region: ohio
     branch: personal
     dockerfilePath: apps/backend/Dockerfile
     dockerContext: apps/backend
@@ -50,6 +53,9 @@ services:
     name: cardly-auth
     runtime: docker
     plan: free
+    # Matches the Neon project region. Postgres latency is on the hot path for
+    # every sync request, so the two must not sit on different coasts.
+    region: ohio
     branch: personal
     dockerfilePath: apps/auth/Dockerfile
     dockerContext: apps/auth
