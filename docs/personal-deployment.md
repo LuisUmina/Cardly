@@ -245,6 +245,28 @@ commit to `personal` to get the first correct production build.
 **Check:** the app loads, and the network tab shows `/v1/...` requests answered
 by the Vercel origin rather than by Render directly.
 
+**Result (verified 2026-09-09):** the whole chain works.
+
+| Probe | Result |
+| --- | --- |
+| `GET https://cardly-nine.vercel.app/` | 200, `text/html` |
+| `GET https://cardly-nine.vercel.app/v1/health` | 200 with a live `dbTime` |
+| `GET https://cardly-nine.vercel.app/auth/health` | 200 `{"ok":true}` |
+| `GET https://cardly-nine.vercel.app/v1/me` | 401 `AUTH_UNAUTHORIZED` |
+
+Two of those are worth more than they look. The rewrites live only in
+`apps/web/vercel.json`, which exists only on `personal`, so `/v1/health`
+answering at all proves the build came from the right branch. And the 401 on
+`/v1/me` proves authentication is enforced, which is what the abandoned
+`AUTH_MODE=none` step would have given away.
+
+The build also picked the environment up correctly: `assets/config-*.js` carries
+the three literal `https://cardly-nine.vercel.app` URLs, and the
+`https://api.${baseDomain}` fallback in `apps/web/src/config.ts` is absent from
+every chunk. Vite substituted the values at build time and dropped the dead
+branch. Had the variables been missing, that fallback would still be there and
+the app would be calling a hostname that does not exist.
+
 ### 4. Cognito
 
 Create the user pool and app client, then set on both Render services:
