@@ -69,6 +69,28 @@ function getResourceUrl(baseDomain: string): string {
 }
 
 /**
+ * Extra hosts accepted by the transport's DNS-rebinding check, comma-separated.
+ *
+ * The check compares the `Host` header against `mcp.<baseDomain>`, which holds
+ * only when the request arrives on that exact name. A deployment that serves MCP
+ * from a shared origin behind a proxy never sees it: the proxy rewrites `Host`
+ * to whatever hostname it dialed, so every request is refused with
+ * `Invalid Host header`.
+ *
+ * That protection exists to stop a hostile page from resolving a name to
+ * localhost and reaching a locally bound MCP server. It has no equivalent
+ * meaning for a public HTTPS origin whose real hostnames are known, so listing
+ * them here restores the check rather than disabling it. Unset changes nothing,
+ * which is what the reference AWS deployment on `mcp.<domain>` wants.
+ */
+function getAdditionalAllowedMcpHosts(): ReadonlyArray<string> {
+  return (process.env.MCP_ALLOWED_HOSTS ?? "")
+    .split(",")
+    .map((host) => host.trim())
+    .filter((host) => host !== "");
+}
+
+/**
  * Resolves the public marketing-site origin surfaced in the MCP implementation
  * metadata. Env-driven via `PUBLIC_SITE_BASE_URL` (self-hosters set their own
  * domain, mirroring the discovery envelope's legal links); when unset it
@@ -311,7 +333,7 @@ async function handleMcpTransportRequest(
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
     enableDnsRebindingProtection: true,
-    allowedHosts: [`mcp.${baseDomain}`],
+    allowedHosts: [`mcp.${baseDomain}`, ...getAdditionalAllowedMcpHosts()],
   });
   const emitRequestRecord = (statusCode: number, response: Response | null): Promise<void> =>
     emitMcpRequestRecord({

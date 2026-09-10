@@ -50,6 +50,12 @@ services:
       # its OAuth protected-resource metadata.
       - key: MCP_BASE_DOMAIN
         sync: false
+      # Hosts the MCP transport's DNS-rebinding check accepts, beyond
+      # mcp.<MCP_BASE_DOMAIN>. Required here because the Vercel proxy rewrites the
+      # Host header to the Render hostname, which that check would otherwise
+      # refuse with "Invalid Host header".
+      - key: MCP_ALLOWED_HOSTS
+        value: cardly-backend-yz2m.onrender.com,cardly-nine.vercel.app
       # The chat live SSE stream. Not optional: envelopes.ts refuses to build a
       # conversation envelope for a running run without one, so an unset
       # CHAT_LIVE_URL fails every chat request with CHAT_RESUME_CONTRACT_VIOLATION.
