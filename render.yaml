@@ -41,6 +41,19 @@ services:
       # changing it invalidates every outstanding browser CSRF token.
       - key: BACKEND_CSRF_SECRET
         generateValue: true
+      # AI chat. The only paid dependency in this deployment; set a spend limit
+      # on the key itself, because nothing here caps provider cost.
+      - key: OPENAI_API_KEY
+        sync: false
+      # The MCP surface runs in this same container (entrypoints/serverWithMcp.ts)
+      # rather than behind its own gateway, and this is the host it advertises in
+      # its OAuth protected-resource metadata.
+      - key: MCP_BASE_DOMAIN
+        sync: false
+      # CHAT_WORKER_FUNCTION_NAME is deliberately unset. Unset selects in-process
+      # execution in chat/worker/invoke.ts, which a long-lived container can do
+      # and a Lambda cannot.
+
       - key: PUBLIC_APP_BASE_URL
         sync: false
       - key: BACKEND_ALLOWED_ORIGINS

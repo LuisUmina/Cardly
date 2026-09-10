@@ -358,6 +358,44 @@ for a number.
 
 **Check:** a request with no credential returns 401. This step is not optional.
 
+### 5. AI chat and MCP
+
+Both run in the same container as the HTTP API, through
+`apps/backend/src/entrypoints/serverWithMcp.ts`, which is the Docker CMD.
+Upstream splits them across three Lambdas; a second free-tier service would
+double the cold starts and save nothing.
+
+**AI chat.** Set `OPENAI_API_KEY` on `cardly-backend` and leave
+`CHAT_WORKER_FUNCTION_NAME` unset. Unset selects in-process execution in
+`chat/worker/invoke.ts`. The split exists on Lambda because the route's response
+ends its invocation and would kill the run with it; a long-lived process outlives
+the response, so the run simply continues in it. Dispatch stays fire-and-forget
+to match `InvocationType: "Event"`, and the client follows progress through
+`GET /v1/chat`.
+
+This is the only paid dependency in the deployment. Set a spend limit on the API
+key itself — nothing here caps provider cost.
+
+**MCP.** Set `MCP_BASE_DOMAIN` and add the Vercel rewrites for `/mcp` and
+`/.well-known/oauth-protected-resource*`. Authenticate with an `fca_` agent API
+key created from Settings → Access in the web app, sent as a Bearer token.
+
+Only the API-key path works here, and that is a real limitation rather than a
+preference. The protected-resource metadata is built from `MCP_BASE_DOMAIN` by
+prepending `mcp.` and `auth.`, so it advertises `mcp.<host>` and `auth.<host>` —
+subdomains this deployment does not have. OAuth discovery would follow them and
+fail. The API-key branch is unaffected: `authenticateMcpBearerToken` dispatches
+`fca_` to `authenticateAgentApiKey` and never consults `expectedResource`,
+because that key already grants identical SQL access on the REST `/agent`
+surface.
+
+`publicMcpServerUrl` in `apps/web/src/appPlatformLinks/AppPlatformMcpOption.tsx`
+now derives from `window.location.origin`. Left hardcoded it would hand the
+reader a working connect button for the upstream author's server.
+
+**Check:** `POST /mcp` with no credential returns 401 with a `WWW-Authenticate`
+challenge; with a valid `fca_` key it completes the MCP handshake.
+
 ## Known limitations
 
 - **Render free services sleep** after roughly 15 minutes idle, and the next

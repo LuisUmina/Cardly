@@ -1,7 +1,14 @@
 import { useState, type ReactElement } from "react";
 import { useI18n } from "../i18n";
 
-export const publicMcpServerUrl: string = "https://mcp.flashcards-open-source-app.com/mcp";
+/**
+ * This deployment serves MCP from its own origin, behind the same Vercel proxy
+ * as the API, so the URL is derived rather than hardcoded to the upstream host.
+ * Leaving the constant pointing at `mcp.flashcards-open-source-app.com` would
+ * hand the reader a working connect button for somebody else's server, with
+ * their own account's cards behind it.
+ */
+export const publicMcpServerUrl: string = `${window.location.origin}/mcp`;
 
 type AppPlatformMcpCopyStatus = "idle" | "copied" | "failed";
 

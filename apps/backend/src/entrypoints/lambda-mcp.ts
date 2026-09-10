@@ -503,3 +503,11 @@ app.onError((error, context) => {
 // buffered-handler equivalent of lambda.ts:134 and matches how lambda.ts
 // delivers buffered events.
 export const handler = wrapBackendHandler(handle(app));
+
+/**
+ * The same Hono app, for a deployment that serves MCP from a long-lived process
+ * instead of a dedicated Lambda behind its own gateway. Exported rather than
+ * rebuilt so both entrypoints share one definition of the MCP surface, its
+ * middleware and its error handling.
+ */
+export { app as mcpApp };
