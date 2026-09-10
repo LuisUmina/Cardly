@@ -393,8 +393,28 @@ surface.
 now derives from `window.location.origin`. Left hardcoded it would hand the
 reader a working connect button for the upstream author's server.
 
+`MCP_ALLOWED_HOSTS` is required too. The transport's DNS-rebinding check
+compares `Host` against `mcp.<MCP_BASE_DOMAIN>`, which only holds when the
+request arrives on that exact name; behind a proxy it never does, because the
+proxy rewrites `Host` to the hostname it dialed, and every request is refused
+with `Invalid Host header`. Listing the real serving hostnames restores the
+check rather than disabling it — the protection targets a hostile page pointing
+a name at localhost, which has no equivalent for a public HTTPS origin.
+
 **Check:** `POST /mcp` with no credential returns 401 with a `WWW-Authenticate`
 challenge; with a valid `fca_` key it completes the MCP handshake.
+
+**Result (verified 2026-09-10):** the full round trip works. `initialize`
+returns the server descriptor with the deployment's own `websiteUrl`,
+`tools/list` returns `sql_query`, `sql_execute` and `list_workspaces`, and a
+`sql_query` call returned real card rows from Neon.
+
+AI chat is wired but unverified end to end: the provider rejects the account
+with `insufficient_quota`, which surfaces as "The AI service is temporarily
+unavailable". Everything up to the provider call is confirmed working — the run
+is accepted, the live envelope builds, and the in-process worker reaches
+OpenAI. A different message, "could not authenticate", would have meant a bad
+key; this one means an unfunded account.
 
 ## Known limitations
 
