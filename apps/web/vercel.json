@@ -21,6 +21,10 @@
       "destination": "https://cardly-backend-yz2m.onrender.com/v1/"
     },
     {
+      "source": "/v1/",
+      "destination": "https://cardly-backend-yz2m.onrender.com/v1/"
+    },
+    {
       "source": "/v1/:path*",
       "destination": "https://cardly-backend-yz2m.onrender.com/v1/:path*"
     },
