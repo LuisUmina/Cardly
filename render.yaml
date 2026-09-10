@@ -50,6 +50,15 @@ services:
       # its OAuth protected-resource metadata.
       - key: MCP_BASE_DOMAIN
         sync: false
+      # The chat live SSE stream. Not optional: envelopes.ts refuses to build a
+      # conversation envelope for a running run without one, so an unset
+      # CHAT_LIVE_URL fails every chat request with CHAT_RESUME_CONTRACT_VIOLATION.
+      # Points at the same container through the Vercel proxy, so it stays same-origin.
+      - key: CHAT_LIVE_URL
+        value: https://cardly-nine.vercel.app/chat-live
+      # Signs the short-lived `Live` token the client presents when attaching.
+      - key: BACKEND_CHAT_LIVE_AUTH_SECRET
+        generateValue: true
       # CHAT_WORKER_FUNCTION_NAME is deliberately unset. Unset selects in-process
       # execution in chat/worker/invoke.ts, which a long-lived container can do
       # and a Lambda cannot.

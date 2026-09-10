@@ -5,6 +5,10 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/chat-live",
+      "destination": "https://cardly-backend-yz2m.onrender.com/chat-live"
+    },
+    {
       "source": "/mcp",
       "destination": "https://cardly-backend-yz2m.onrender.com/mcp"
     },

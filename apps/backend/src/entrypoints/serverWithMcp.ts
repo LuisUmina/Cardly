@@ -18,6 +18,7 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "../server/app";
 import { mcpApp } from "./lambda-mcp";
+import { chatLivePath, createChatLiveApp } from "./chatLiveApp";
 import { initializeBackendSentry } from "../observability/sentry";
 import { initializeLangfuseTelemetry } from "../telemetry/langfuse";
 
@@ -35,13 +36,21 @@ async function main(): Promise<void> {
   initializeLangfuseTelemetry();
 
   const apiApp = createApp("/v1");
+  const chatLiveApp = createChatLiveApp();
   const port = Number.parseInt(process.env.PORT ?? "8080", 10);
 
   serve({
     fetch: (request: Request, ...rest: ReadonlyArray<unknown>): Response | Promise<Response> => {
       const { pathname } = new URL(request.url);
-      const app = isMcpPath(pathname) ? mcpApp : apiApp;
-      return app.fetch(request, ...rest);
+      if (isMcpPath(pathname)) {
+        return mcpApp.fetch(request, ...rest);
+      }
+
+      if (pathname === chatLivePath) {
+        return chatLiveApp.fetch(request, ...rest);
+      }
+
+      return apiApp.fetch(request, ...rest);
     },
     port,
   }, (info) => {
