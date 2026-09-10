@@ -68,7 +68,9 @@ variable is `sync: false` rather than generated.
 
 ## Runbook
 
-Each step has a check. Do not move on until it passes.
+Each step has a check. Do not move on until it passes. All four steps are
+complete and verified as of 2026-09-10; the deployment is live at
+`https://cardly-nine.vercel.app`.
 
 ### 1. Database
 
@@ -319,6 +321,40 @@ which is on the Public Suffix List and which browsers reject. The exact host is 
 subdomain of that suffix, so it is accepted.
 
 **Check:** sign in with a real email and receive the code.
+
+**Result (verified 2026-09-10):** sign-in works end to end. The seeded demo card
+appears after login, which proves more than authentication: the backend
+provisioned the user, created a workspace, seeded onboarding content, and sync
+delivered it to IndexedDB.
+
+Four things had to be configured in Supabase beyond the keys, and three of them
+were only discovered by running the flow:
+
+1. **Email OTP length must be 8.** `verifyCode.ts` and `agentVerifyCode.ts` both
+   match `/^\d{8}$/` and the login template sets `maxlength="8"`. Supabase's
+   field accepts 6-10; anything but 8 is rejected by the app before the code ever
+   reaches the provider, which surfaces as a confusing generic error.
+2. **Custom SMTP is required, and not for volume.** Supabase will not let the
+   email templates be edited without it, and the stock templates send a magic
+   link with no code in them — so the app asks for eight digits that appear
+   nowhere. Resend on its shared `onboarding@resend.dev` sender is enough for a
+   single user; without a verified domain it only delivers to the address the
+   Resend account was registered with, which therefore has to be the address you
+   sign in with.
+3. **Two templates need the code, not one.** "Magic link or OTP" covers returning
+   users, but a brand-new address gets "Confirm sign up" instead, because the
+   account does not exist yet. Editing only the first leaves the very first
+   sign-in — the only one that matters on a fresh deployment — still sending a
+   bare link. Both need `{{ .Token }}`.
+4. **Site URL defaults to `http://localhost:3000`.** Set it to the Vercel origin
+   under URL Configuration. It only matters for link-based flows, which this
+   deployment does not use, but a stray link click otherwise lands on a dead
+   localhost page.
+
+The magic link is deliberately removed from both templates. It points at
+Supabase's own redirect flow, which this app does not implement — leaving it in
+gives the reader a button that goes somewhere half-working while the app waits
+for a number.
 
 **Check:** a request with no credential returns 401. This step is not optional.
 
